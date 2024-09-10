@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "audiopkg": {
+      "commandName": "Project",
+      "commandLineArgs": "\"D:\\nomad\\games\\the-hobbit\\Sierra\\The Hobbit(TM)\\Common\\AUDIO\\MUSIC_AMB_REG1_OUTDOOR.AUDIOPKG\" -e"
+    }
+  }
+}
