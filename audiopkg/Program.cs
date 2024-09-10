@@ -443,10 +443,10 @@ struct AILSOUNDINFO
 static class Mss
 {
     public const int WAVE_FORMAT_IMA_ADPCM = 0x0011;
-    [DllImport(@"D:\nomad\games\the-hobbit\Sierra\The Hobbit(TM)\Mss32.dll", SetLastError = true)]
+    [DllImport(@"Mss32.dll", SetLastError = true)]
     public static extern int AIL_decompress_ADPCM(ref AILSOUNDINFO soundInfo, out IntPtr wav, out int size);
 
-    [DllImport(@"D:\nomad\games\the-hobbit\Sierra\The Hobbit(TM)\Mss32.dll", SetLastError = true)]
+    [DllImport(@"Mss32.dll", SetLastError = true)]
     public static extern IntPtr AIL_last_error();
 
     public static byte[] Decompress(byte[] sampleBytes, SampleHeader header, string version)
