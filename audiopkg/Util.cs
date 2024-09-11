@@ -39,5 +39,25 @@ namespace audiopkg
             Console.WriteLine($"index: {index}, null index: {nullIndex}");
             return Encoding.ASCII.GetString(buffer, index, nullIndex - index);
         }
+
+        public static int[] ReadInts32(BinaryReader reader, int count)
+        {
+            var ret = new int[count];
+            for (int i = 0; i < count; i++)
+            {
+                ret[i] = reader.ReadInt32();
+            }
+
+            return ret;
+        }
+
+        public static void Align(FileStream file, int byteCount) //might need this later for writing.
+        {
+            var mod = file.Position % byteCount;
+            if (mod != 0)
+            {
+                file.Seek(byteCount - mod, SeekOrigin.Current);
+            }
+        }
     }
 }
