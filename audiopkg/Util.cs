@@ -36,7 +36,6 @@ namespace audiopkg
                 }
             }
 
-            Console.WriteLine($"index: {index}, null index: {nullIndex}");
             return Encoding.ASCII.GetString(buffer, index, nullIndex - index);
         }
 

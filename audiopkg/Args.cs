@@ -1,12 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Net;
-using System.Reflection;
-using System.Text;
-using System.Threading.Tasks;
-
-namespace audiopkg
+﻿namespace audiopkg
 {
     internal class Args
     {
@@ -14,6 +6,7 @@ namespace audiopkg
         public bool Decompress;
         public bool Extract;
         public bool Vgmstream;
+        public bool Verbose;
 
         public static bool TryParse(string[] args, out Args outArgs)
         {
@@ -37,8 +30,11 @@ namespace audiopkg
                         case "decompress":
                             outArgs.Decompress = true;
                             break;
-                        case "vgmstream":
+                        case "txth":
                             outArgs.Vgmstream = true;
+                            break;
+                        case "verbose":
+                            outArgs.Verbose = true;
                             break;
                     }
 
@@ -60,8 +56,11 @@ namespace audiopkg
                         case "d":
                             outArgs.Decompress = true;
                             break;
-                        case "v":
+                        case "t":
                             outArgs.Vgmstream = true;
+                            break;
+                        case "v":
+                            outArgs.Verbose = true;
                             break;
                     }
 
@@ -75,7 +74,8 @@ namespace audiopkg
 flags:
     -e, --extract: extract all audio files from the package
     -d, --decompress: decompress all audio files
-    -v, --vgmstream: package the extracted audio for vgmstream
+    -t, --txth: package the extracted audio for vgmstream using a txth file
+    -v, --verbose: print a bunch of information as we're reading the file
 ");
                 return false;
             }
@@ -87,6 +87,14 @@ flags:
 
             outArgs.Infile = arglist[0];
             return true;
+        }
+
+        public void WriteVerbose(string text)
+        {
+            if (Verbose)
+            {
+                Console.WriteLine(text);
+            }
         }
     }
 }

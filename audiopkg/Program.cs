@@ -1,11 +1,8 @@
 ﻿//an attempt at extracting the audiopkg format from hobbit 03
 
 using audiopkg;
-using System.ComponentModel.DataAnnotations;
-using System.Diagnostics;
-using System.IO.MemoryMappedFiles;
 using System.Runtime.InteropServices;
-using static audiopkg.Util;
+using static audiopkg.AudioPackage;
 
 if (!Args.TryParse(args, out var arguments))
 {
@@ -14,10 +11,31 @@ if (!Args.TryParse(args, out var arguments))
 
 using var infile = File.OpenRead(arguments.Infile);
 using var reader = new BinaryReader(infile);
-var package = new AudioPackage(reader);
+var package = new AudioPackage();
+if (!package.TryLoad(reader, arguments))
+{
+    return 1;
+}
+
+if (arguments.Vgmstream && !new string[] { platform_ps2, platform_xbox }.Contains(package.Platform))
+{
+    Console.Error.WriteLine($"vgmstream only works with xbox and ps2.");
+    return 1;
+}
+
+if (arguments.Decompress && package.Platform != platform_pc)
+{
+    Console.Error.WriteLine($"Only pc files can be decompressed at the moment.");
+    return 1;
+}
+
 if (arguments.Extract)
 {
     package.ExtractAllFiles(reader, arguments);
+}
+else
+{
+    Console.WriteLine($"read package with {package.descriptorIdentifiers.Count} identifiers");
 }
 
 return 0;
