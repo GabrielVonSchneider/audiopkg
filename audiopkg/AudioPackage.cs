@@ -1,10 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Linq;
-using System.Reflection.Metadata.Ecma335;
-using System.Text;
-using System.Threading.Tasks;
+﻿using System.Diagnostics;
 using static audiopkg.Util;
 
 namespace audiopkg
@@ -32,17 +26,24 @@ namespace audiopkg
         ushort[] sampleHeaderIndices;
         List<SampleHeader> sampleHeaders;
 
+        //should be safe to assume that there aren't different types of compression in the same package.
+        int compressionType; 
+
         public const string platform_ps2 = "PlayStation II";
         public const string platform_pc = "Windows";
         public const string platform_xbox = "Xbox";
+        public const string platform_gamecube = "Gamecube";
         const int numTemperatures = 3;
 
 
-        public bool TryLoad(BinaryReader reader, Args args)
+        public bool TryLoad(FileStream file, Args args)
         {
+            var reader = new EndianAwareBinaryReader(file);
             Version = GetNullTerminatedString(reader.ReadBytes(16), 0);
             Platform = GetNullTerminatedString(reader.ReadBytes(16), 0);
             User = GetNullTerminatedString(reader.ReadBytes(16), 0);
+
+            reader.IsBigEndian = Platform == platform_gamecube;
 
             switch (Version)
             {
@@ -67,11 +68,31 @@ namespace audiopkg
             lipsyncTableFootprint = reader.ReadInt32();
             breakpointTableFootprint = reader.ReadInt32();
             musicDataFootprint = reader.ReadInt32();
-            nSampleHeaders = ReadInts32(reader, numTemperatures);
-            nSampleIndices = ReadInts32(reader, numTemperatures);
-            compressionTypes = ReadInts32(reader, numTemperatures);
-            headerSizes = ReadInts32(reader, numTemperatures);
-            Debug.Assert(headerSizes.Sum() == 120 && headerSizes[0] == 40, Dump(headerSizes));
+            nSampleHeaders = reader.ReadInts32(numTemperatures);
+            nSampleIndices = reader.ReadInts32(numTemperatures);
+            args.WriteVerbose($"number of sample indices: {Dump(nSampleIndices)}");
+            compressionTypes = reader.ReadInts32(numTemperatures);
+            args.WriteVerbose($"compression types: {Dump(compressionTypes)}");
+            headerSizes = reader.ReadInts32(numTemperatures);
+
+            //assert that all the compression types are the same
+            compressionType = -1;
+            for (int i = 0; i < numTemperatures; i++)
+            {
+                if (nSampleHeaders[i] > 0)
+                {
+                    if (compressionType == -1)
+                    {
+                        compressionType = compressionTypes[i];
+                    }
+                    else
+                    {
+                        Debug.Assert(compressionTypes[i] == compressionType);
+                    }
+                }
+            }
+
+            //Debug.Assert(headerSizes.Sum() == 120 && headerSizes[0] == 40, Dump(headerSizes));
             if (Version == "v1.7" && Platform == platform_xbox)
             {
                 reader.BaseStream.Seek(4, SeekOrigin.Current); //some unknown bytes on area 51 xbox.
@@ -128,7 +149,8 @@ namespace audiopkg
             }
             reader.BaseStream.Seek(descriptorStart + descriptorFootprint, SeekOrigin.Begin);
 
-            var totalSampleHeaderIndices = nSampleIndices.Sum(x => x == 0 ? 0 : x + 1); // why + 1?
+            //+1 because of the stereo calculation
+            var totalSampleHeaderIndices = nSampleIndices.Sum(x => x == 0 ? 0 : x + 1);
             sampleHeaderIndices = new ushort[totalSampleHeaderIndices];
             args.WriteVerbose($"reading sample header indices at: 0x{reader.BaseStream.Position:x}");
             for (int i = 0; i < totalSampleHeaderIndices; i++)
@@ -149,8 +171,9 @@ namespace audiopkg
             return true;
         }
 
-        public void ExtractAllFiles(BinaryReader reader, Args args)
+        public void ExtractAllFiles(Stream stream, Args args)
         {
+            var reader = new EndianAwareBinaryReader(stream) { IsBigEndian = Platform == platform_gamecube, };
             var outDir = Path.GetDirectoryName(args.Infile) ?? throw new InvalidOperationException();
             if (args.Vgmstream)
             {
@@ -201,7 +224,8 @@ namespace audiopkg
                     //yes, this is actually how they did this
                     var nChannels = sampleHeaderIndices[element.Index + 1] - sampleHeaderIndices[element.Index];
 
-                    if (Platform == platform_ps2)
+                    if (compressionType == (uint)CompressionType.Mp3
+                        || (compressionType == (uint)CompressionType.Adpcm && Platform == platform_ps2))
                     {
                         string outFilePath = outFileStart;
                         var header = sampleHeaders[sampleHeaderIndices[element.Index]];
@@ -214,6 +238,10 @@ namespace audiopkg
                         else if (args.Vgmstream)
                         {
                             outFilePath += ".vgmstream";
+                        }
+                        else if (header.CompressionType == CompressionType.Mp3)
+                        {
+                            outFilePath += ".mp3";
                         }
                         else
                         {
@@ -308,6 +336,7 @@ namespace audiopkg
                 platform_xbox => ReadXbox(file, header, nChannels, leftRight),
                 platform_pc => ReadPC(file, header, nChannels, leftRight),
                 platform_ps2 => ReadPlain(file, header),
+                platform_gamecube => ReadPlain(file, header),
                 _ => throw new InvalidOperationException($"unhandled platform {Platform}"),
             };
         }
@@ -374,18 +403,41 @@ namespace audiopkg
         NUM_DESCRIPTOR_TYPES = 4,
     }
 
+    class DescriptorIdentifier
+    {
+        public ushort StringOffset;
+        public ushort Index;
+        public uint pPackage;
+
+        public static DescriptorIdentifier Read(EndianAwareBinaryReader reader)
+        {
+            return new DescriptorIdentifier
+            {
+                StringOffset = reader.ReadUInt16(),
+                Index = reader.ReadUInt16(),
+                pPackage = reader.ReadUInt32(),
+            };
+        }
+
+        public override string ToString()
+        {
+            return $"d.i. string offset = {StringOffset}, index = {Index}";
+        }
+    }
+
     class Descriptor
     {
         public readonly List<Element> Elements = new List<Element>();
 
-        static bool HasParams(uint index)
+        static bool HasParams(ushort index)
         {
             return (index & (1 << 13)) != 0;
         }
 
-        public static Descriptor Read(BinaryReader reader)
+        public static Descriptor Read(EndianAwareBinaryReader reader)
         {
-            var descriptorIndex = reader.ReadUInt32();
+            var descriptorIndex = reader.ReadUInt16();
+            reader.BaseStream.Seek(2, SeekOrigin.Current); //skip some flags
             var desc = new Descriptor();
             var type = (descriptor_type)(descriptorIndex >> 14 & 3); //type stored in bits 14-15
             bool hasParams = HasParams(descriptorIndex);
@@ -393,13 +445,15 @@ namespace audiopkg
             {
                 //skip the params
                 var parameterSize = reader.ReadUInt16() >> 1;
-                reader.BaseStream.Seek((parameterSize - 1) * 2, SeekOrigin.Current); //parameter size is in words
+                //parameter size is in words and includes the parameter size value
+                reader.BaseStream.Seek((parameterSize - 1) * 2, SeekOrigin.Current);
             }
 
             if (type == descriptor_type.SIMPLE)
             {
                 var el = new Element();
-                var elementIndex = reader.ReadUInt32();
+                var elementIndex = reader.ReadUInt16();
+                reader.BaseStream.Seek(2, SeekOrigin.Current); //skip over some parameters
                 el.IndexType = GetIndexType(elementIndex); //bits 14-15
                 el.Index = GetIndex(elementIndex); //bits 0-12
                 desc.Elements.Add(el);
@@ -407,10 +461,11 @@ namespace audiopkg
             else if (type == descriptor_type.WEIGHTED_LIST)
             {
                 var elementCount = reader.ReadInt16();
-                var weights = ReadUints16(reader, elementCount);
+                var weights = reader.ReadUints16(elementCount);
                 for (int i = 0; i < elementCount; i++)
                 {
-                    var elementIndex = reader.ReadUInt32();
+                    var elementIndex = reader.ReadUInt16();
+                    reader.BaseStream.Seek(2, SeekOrigin.Current); //skip over some parameters
                     if (HasParams(elementIndex))
                     {
                         var parameterSize = reader.ReadUInt16();
@@ -431,7 +486,8 @@ namespace audiopkg
 
                 for (int i = 0; i < elementCount; i++)
                 {
-                    var elementIndex = reader.ReadUInt32();
+                    var elementIndex = reader.ReadUInt16();
+                    reader.BaseStream.Seek(2, SeekOrigin.Current); //skip over some parameters
                     if (HasParams(elementIndex))
                     {
                         var parameterSize = reader.ReadUInt16();
@@ -461,6 +517,13 @@ namespace audiopkg
         }
     }
 
+    enum CompressionType : uint
+    {
+        Adpcm = 0,
+        Pcm = 1,
+        Mp3 = 2,
+    }
+
     class SampleHeader
     {
         public const int WaveformOffsetOffset = 0x04;
@@ -476,13 +539,13 @@ namespace audiopkg
         public uint WaveformLength;
         public uint LipSyncOffset;
         public int BreakPointOffset;
-        public uint CompressionType;
+        public CompressionType CompressionType;
         public int nSamples;
         public int SampleRate;
         public int LoopStart;
         public int LoopEnd;
 
-        public static SampleHeader FromFile(BinaryReader file)
+        public static SampleHeader FromFile(EndianAwareBinaryReader file)
         {
             return new SampleHeader
             {
@@ -491,7 +554,7 @@ namespace audiopkg
                 WaveformLength = file.ReadUInt32(),
                 LipSyncOffset = file.ReadUInt32(),
                 BreakPointOffset = file.ReadInt32(), //offset in the breakpoint table
-                CompressionType = file.ReadUInt32(),
+                CompressionType = (CompressionType)file.ReadUInt32(),
                 nSamples = file.ReadInt32(),
                 SampleRate = file.ReadInt32(),
                 LoopStart = file.ReadInt32(),
@@ -506,7 +569,7 @@ namespace audiopkg
             writer.Write(WaveformLength);
             writer.Write(LipSyncOffset);
             writer.Write(BreakPointOffset);
-            writer.Write(CompressionType);
+            writer.Write((uint)CompressionType);
             writer.Write(nSamples);
             writer.Write(SampleRate);
             writer.Write(LoopStart);
@@ -520,7 +583,7 @@ namespace audiopkg
 
         public override string ToString()
         {
-            return $"Sample at 0x{WaveformOffset:x} with sample rate {SampleRate}, 0x{nSamples:x} samples and length of 0x{WaveformLength:x} and breakpoint offset {BreakPointOffset}";
+            return $"Sample at 0x{WaveformOffset:x} with sample rate {SampleRate}, 0x{nSamples:x} samples and length of 0x{WaveformLength:x} and compression type {CompressionType}";
         }
     }
 

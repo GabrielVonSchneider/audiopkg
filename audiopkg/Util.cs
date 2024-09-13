@@ -4,17 +4,6 @@ namespace audiopkg
 {
     internal static class Util
     {
-        public static ushort[] ReadUints16(BinaryReader reader, int count)
-        {
-            var ret = new ushort[count];
-            for (int i = 0; i < count; i++)
-            {
-                ret[i] = reader.ReadUInt16();
-            }
-
-            return ret;
-        }
-
         public static string Dump(byte[] data)
         {
             return string.Join(", ", data.Select(x => x.ToString("x2")));
@@ -37,17 +26,6 @@ namespace audiopkg
             }
 
             return Encoding.ASCII.GetString(buffer, index, nullIndex - index);
-        }
-
-        public static int[] ReadInts32(BinaryReader reader, int count)
-        {
-            var ret = new int[count];
-            for (int i = 0; i < count; i++)
-            {
-                ret[i] = reader.ReadInt32();
-            }
-
-            return ret;
         }
 
         public static void Align(FileStream file, int byteCount) //might need this later for writing.

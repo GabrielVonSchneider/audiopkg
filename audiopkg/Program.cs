@@ -10,9 +10,8 @@ if (!Args.TryParse(args, out var arguments))
 }
 
 using var infile = File.OpenRead(arguments.Infile);
-using var reader = new BinaryReader(infile);
 var package = new AudioPackage();
-if (!package.TryLoad(reader, arguments))
+if (!package.TryLoad(infile, arguments))
 {
     return 1;
 }
@@ -31,7 +30,7 @@ if (arguments.Decompress && package.Platform != platform_pc)
 
 if (arguments.Extract)
 {
-    package.ExtractAllFiles(reader, arguments);
+    package.ExtractAllFiles(infile, arguments);
 }
 else
 {
@@ -56,28 +55,6 @@ class Element
     public override string ToString()
     {
         return $"element with index type {this.IndexType} and index {this.Index}";
-    }
-}
-
-class DescriptorIdentifier
-{
-    public ushort StringOffset;
-    public ushort Index;
-    public uint pPackage;
-
-    public static DescriptorIdentifier Read(BinaryReader reader)
-    {
-        return new DescriptorIdentifier
-        {
-            StringOffset = reader.ReadUInt16(),
-            Index = reader.ReadUInt16(),
-            pPackage = reader.ReadUInt32(),
-        };
-    }
-
-    public override string ToString()
-    {
-        return $"d.i. string offset = {StringOffset}, index = {Index}";
     }
 }
 
