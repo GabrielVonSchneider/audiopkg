@@ -23,17 +23,21 @@ namespace audiopkg
         string[] stringTable;
         uint[] descriptorOffsets;
         Descriptor[] descriptors;
-        ushort[] sampleHeaderIndices;
-        List<SampleHeader> sampleHeaders;
+        ushort[][] sampleHeaderIndices = new ushort[numTemperatures][];
+        List<SampleHeader> hotSamples = new();
+        List<SampleHeader> coldSamples = new();
 
         //should be safe to assume that there aren't different types of compression in the same package.
-        int compressionType; 
+        int compressionType;
 
         public const string platform_ps2 = "PlayStation II";
         public const string platform_pc = "Windows";
         public const string platform_xbox = "Xbox";
         public const string platform_gamecube = "Gamecube";
         const int numTemperatures = 3;
+        const int HOT = 0;
+        const int WARM = 1;
+        const int COLD = 2;
 
 
         public bool TryLoad(FileStream file, Args args)
@@ -51,7 +55,18 @@ namespace audiopkg
                     reader.BaseStream.Seek(0xA0, SeekOrigin.Begin);
                     break;
                 case "v1.6":
-                    reader.BaseStream.Seek(0xA0, SeekOrigin.Begin);
+                    if (Platform == platform_pc)
+                    {
+                        reader.BaseStream.Seek(0xA0, SeekOrigin.Begin);
+                    }
+                    else if (Platform == platform_xbox) //area 51 xbox demo
+                    {
+                        reader.BaseStream.Seek(0xB0, SeekOrigin.Begin);
+                    }
+                    else
+                    {
+                        Console.Error.WriteLine($"Unknown version {Version} for platfor {Platform}");
+                    }
                     break;
                 case "v1.7":
                     reader.BaseStream.Seek(0xC0, SeekOrigin.Begin);
@@ -89,11 +104,12 @@ namespace audiopkg
                     {
                         Debug.Assert(compressionTypes[i] == compressionType);
                     }
+
+                    Debug.Assert(headerSizes[i] == 40);
                 }
             }
 
-            //Debug.Assert(headerSizes.Sum() == 120 && headerSizes[0] == 40, Dump(headerSizes));
-            if (Version == "v1.7" && Platform == platform_xbox)
+            if ((Version == "v1.7" || Version == "v1.6") && Platform == platform_xbox)
             {
                 reader.BaseStream.Seek(4, SeekOrigin.Current); //some unknown bytes on area 51 xbox.
             }
@@ -145,27 +161,38 @@ namespace audiopkg
             for (int i = 0; i < nDescriptors; i++)
             {
                 reader.BaseStream.Seek(descriptorOffsets[i] + descriptorStart, SeekOrigin.Begin);
-                descriptors[i] = Descriptor.Read(reader);
+                descriptors[i] = Descriptor.Read(reader, args);
             }
             reader.BaseStream.Seek(descriptorStart + descriptorFootprint, SeekOrigin.Begin);
 
-            //+1 because of the stereo calculation
-            var totalSampleHeaderIndices = nSampleIndices.Sum(x => x == 0 ? 0 : x + 1);
-            sampleHeaderIndices = new ushort[totalSampleHeaderIndices];
             args.WriteVerbose($"reading sample header indices at: 0x{reader.BaseStream.Position:x}");
-            for (int i = 0; i < totalSampleHeaderIndices; i++)
+            for (int temp = 0; temp < numTemperatures; temp++)
             {
-                sampleHeaderIndices[i] = reader.ReadUInt16();
-                args.WriteVerbose(sampleHeaderIndices[i].ToString("x2"));
+                if (nSampleIndices[temp] == 0)
+                {
+                    continue;
+                }
+
+                //+1 for the stereo calculation
+                sampleHeaderIndices[temp] = new ushort[nSampleIndices[temp] + 1];
+                for (int i = 0; i < sampleHeaderIndices[temp].Length; i++)
+                {
+                    sampleHeaderIndices[temp][i] = reader.ReadUInt16();
+                    args.WriteVerbose(sampleHeaderIndices[temp][i].ToString("x2"));
+                }
             }
 
-            var totalSampleHeaders = nSampleHeaders.Sum();
-            args.WriteVerbose($"reading {totalSampleHeaders} sample headers at 0x{reader.BaseStream.Position:x}");
-            sampleHeaders = new List<SampleHeader>();
-            for (int i = 0; i < totalSampleHeaders; i++)
+            args.WriteVerbose($"reading {nSampleHeaders[HOT]} hot sample headers at 0x{reader.BaseStream.Position:x}");
+            for (int i = 0; i < nSampleHeaders[HOT]; i++)
             {
-                sampleHeaders.Add(SampleHeader.FromFile(reader));
-                args.WriteVerbose(sampleHeaders[i].ToString());
+                hotSamples.Add(SampleHeader.FromFile(reader));
+                args.WriteVerbose(hotSamples[i].ToString());
+            }
+            args.WriteVerbose($"reading {nSampleHeaders[COLD]} cold sample headers at 0x{reader.BaseStream.Position:x}");
+            for (int i = 0; i < nSampleHeaders[COLD]; i++)
+            {
+                coldSamples.Add(SampleHeader.FromFile(reader));
+                args.WriteVerbose(coldSamples[i].ToString());
             }
 
             return true;
@@ -216,19 +243,46 @@ namespace audiopkg
                     string outFileStart = Path.Combine(outDir, stringTable[id.Index]);
                     if (descriptor.Elements.Count > 1)
                     {
-                        outFileStart += $"_{i:d2}";
+                        outFileStart += $"_{iEl:d2}";
                     }
 
-                    Debug.Assert(element.IndexType != index_type.DESCRIPTOR_INDEX);
+                    var indices = element.IndexType switch
+                    {
+                        index_type.HOT_INDEX => sampleHeaderIndices[HOT],
+                        index_type.COLD_INDEX => sampleHeaderIndices[COLD],
+                        _ => throw new InvalidOperationException($"Unsupported index type {element.IndexType}"),
+                    };
+
+                    var headers = element.IndexType switch
+                    {
+                        index_type.HOT_INDEX => hotSamples,
+                        index_type.COLD_INDEX => coldSamples,
+                        _ => throw new InvalidOperationException($"Unsupported index type {element.IndexType}"),
+                    };
+
+                    if (element.Index + 1 >= indices.Length)
+                    {
+                        Console.Error.WriteLine($"Warning: out of range descriptor index 0x{element.Index:x} for identifier {stringTable[id.Index]} - skipping.");
+                        continue;
+                    }
 
                     //yes, this is actually how they did this
-                    var nChannels = sampleHeaderIndices[element.Index + 1] - sampleHeaderIndices[element.Index];
+                    var nChannels = indices[element.Index + 1] - indices[element.Index];
+                    Debug.Assert(nChannels <= 2);
+
+                    bool interleaved = true;
+                    if (nChannels == 2 && headers[indices[element.Index] + 1].WaveformOffset != headers[indices[element.Index]].WaveformOffset)
+                    {
+                        //this is true for some of the files in the xbox demo:
+                        //l and r aren't interleaved, but just written separately
+                        interleaved = false;
+                    }
 
                     if (compressionType == (uint)CompressionType.Mp3
                         || (compressionType == (uint)CompressionType.Adpcm && Platform == platform_ps2))
                     {
                         string outFilePath = outFileStart;
-                        var header = sampleHeaders[sampleHeaderIndices[element.Index]];
+                        var header = headers[indices[element.Index]];
                         args.WriteVerbose(header.ToString());
 
                         if (args.Decompress)
@@ -249,12 +303,6 @@ namespace audiopkg
                         }
 
                         var sample = ReadSample(reader.BaseStream, header, nChannels, 0);
-                        if (args.Decompress)
-                        {
-                            Console.Error.WriteLine($"decompression not supported for ps2");
-                            return;
-                        }
-
                         using var outFile = File.OpenWrite(outFilePath);
                         using var binWriter = new BinaryWriter(outFile);
                         if (args.Vgmstream)
@@ -266,11 +314,10 @@ namespace audiopkg
                     }
                     else
                     {
-
                         for (int iCh = 0; iCh < nChannels; iCh++)
                         {
                             string outFilePath = outFileStart;
-                            var header = sampleHeaders[sampleHeaderIndices[element.Index] + iCh];
+                            var header = headers[indices[element.Index] + iCh];
                             args.WriteVerbose(header.ToString());
                             if (nChannels > 1)
                             {
@@ -291,7 +338,16 @@ namespace audiopkg
                                 outFilePath += ".raw";
                             }
 
-                            var sample = ReadSample(reader.BaseStream, header, nChannels, iCh);
+                            byte[] sample;
+                            if (interleaved)
+                            {
+                                sample = ReadSample(reader.BaseStream, header, nChannels, iCh);
+                            }
+                            else
+                            {
+                                sample = ReadSample(reader.BaseStream, header, 1, 0);
+                            }
+
                             if (args.Decompress)
                             {
                                 //possible todo: package the stereo halves into a stereo wav file
@@ -352,18 +408,35 @@ namespace audiopkg
         //untangle the xbox interleave
         byte[] ReadXbox(Stream file, SampleHeader header, int nChannels, int leftRight)
         {
+            if (nChannels == 2)
+            {
+                Debug.Assert(header.WaveformLength % 2 == 0);
+            }
+
             var outBytes = new byte[header.WaveformLength / nChannels];
             const int BufferSize = 32 * 1024;
             //this calculation is directly from ProcessSample.cpp - 16 bytes of waste at the end of every other block
             var waste = (BufferSize * 2) % 36;
             int[] dataSizes = [BufferSize, BufferSize - waste];
             int[] dataWaste = [0, waste];
-            int bytesRead = 0;
+            int totalBytesRead = 0;
             file.Seek(header.WaveformOffset, SeekOrigin.Begin);
-            file.Seek(BufferSize * leftRight, SeekOrigin.Current); //todo: handle the end bit correctly.
-            for (int evenOdd = 0; bytesRead + dataSizes[evenOdd] <= outBytes.Length; evenOdd ^= 1)
+            file.Seek(BufferSize * leftRight, SeekOrigin.Current);
+            for (int evenOdd = 0; ; evenOdd ^= 1)
             {
-                bytesRead += file.Read(outBytes, bytesRead, dataSizes[evenOdd]);
+                var toRead = Math.Min(dataSizes[evenOdd], outBytes.Length - totalBytesRead); //todo: calculate correctly for stereo
+                if (toRead == 0 || toRead + totalBytesRead > outBytes.Length)
+                {
+                    break;
+                }
+
+                var bytesRead = file.Read(outBytes, totalBytesRead, toRead);
+                if (bytesRead != toRead)
+                {
+                    Console.Error.WriteLine($"warning: read past eof. channels: {nChannels} l/r: {leftRight}");
+                    break;
+                }
+                totalBytesRead += bytesRead;
                 file.Seek(dataWaste[evenOdd], SeekOrigin.Current);
                 file.Seek(BufferSize * (nChannels - 1), SeekOrigin.Current);
             }
@@ -425,6 +498,16 @@ namespace audiopkg
         }
     }
 
+    class Element
+    {
+        public int Index;
+        public index_type IndexType;
+        public override string ToString()
+        {
+            return $"element with index type {this.IndexType} and index 0x{this.Index:x}";
+        }
+    }
+
     class Descriptor
     {
         public readonly List<Element> Elements = new List<Element>();
@@ -434,7 +517,7 @@ namespace audiopkg
             return (index & (1 << 13)) != 0;
         }
 
-        public static Descriptor Read(EndianAwareBinaryReader reader)
+        public static Descriptor Read(EndianAwareBinaryReader reader, Args arguments)
         {
             var descriptorIndex = reader.ReadUInt16();
             reader.BaseStream.Seek(2, SeekOrigin.Current); //skip some flags
@@ -449,6 +532,7 @@ namespace audiopkg
                 reader.BaseStream.Seek((parameterSize - 1) * 2, SeekOrigin.Current);
             }
 
+            arguments.WriteVerbose($"reading descriptor of type {type} at 0x{reader.BaseStream.Position:x}");
             if (type == descriptor_type.SIMPLE)
             {
                 var el = new Element();
@@ -457,6 +541,24 @@ namespace audiopkg
                 el.IndexType = GetIndexType(elementIndex); //bits 14-15
                 el.Index = GetIndex(elementIndex); //bits 0-12
                 desc.Elements.Add(el);
+            }
+            else if (type == descriptor_type.COMPLEX)
+            {
+                var elementCount = reader.ReadInt16();
+                for (int i = 0; i < elementCount; i++)
+                {
+                    var deltaTime = reader.ReadInt16(); //ignore for now
+                    var elementIndex = reader.ReadUInt16();
+                    if (HasParams(elementIndex)) //skip over parameters 
+                    {
+                        var parameterSize = reader.ReadUInt16();
+                        reader.BaseStream.Seek((parameterSize - 1) * 2, SeekOrigin.Current);
+                    }
+                    var el = new Element();
+                    el.IndexType = GetIndexType(elementIndex); //bits 14-15
+                    el.Index = GetIndex(elementIndex); //bits 0-12
+                    desc.Elements.Add(el);
+                }
             }
             else if (type == descriptor_type.WEIGHTED_LIST)
             {
@@ -503,6 +605,12 @@ namespace audiopkg
             {
                 Debug.Fail($"unhandled descriptor type {type}");
             }
+
+            foreach (var element in desc.Elements)
+            {
+                arguments.WriteVerbose($"element with index 0x{element.Index:x2} and type {element.IndexType}");
+            }
+
             return desc;
         }
 
@@ -586,6 +694,4 @@ namespace audiopkg
             return $"Sample at 0x{WaveformOffset:x} with sample rate {SampleRate}, 0x{nSamples:x} samples and length of 0x{WaveformLength:x} and compression type {CompressionType}";
         }
     }
-
-
 }

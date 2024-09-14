@@ -48,16 +48,6 @@ enum index_type
     DESCRIPTOR_INDEX = 3,   // Index references an audio descriptor.
 }
 
-class Element
-{
-    public int Index;
-    public index_type IndexType;
-    public override string ToString()
-    {
-        return $"element with index type {this.IndexType} and index {this.Index}";
-    }
-}
-
 [StructLayout(LayoutKind.Sequential)]
 struct AILSOUNDINFO
 {
