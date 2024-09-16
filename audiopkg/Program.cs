@@ -32,31 +32,9 @@ if (arguments.Extract)
 {
     package.ExtractAllFiles(infile, arguments);
 }
-else
+if (arguments.Print)
 {
-    Console.WriteLine($"read package with {package.descriptorIdentifiers.Count} identifiers");
+    package.WriteInfo();
 }
 
 return 0;
-
-
-enum index_type
-{
-    HOT_INDEX = 0,          // Index references a loaded sample.
-    WARM_INDEX = 1,         // Index references a "hybrid" sample.
-    COLD_INDEX = 2,         // Index references a streamed sample.
-    DESCRIPTOR_INDEX = 3,   // Index references an audio descriptor.
-}
-
-[StructLayout(LayoutKind.Sequential)]
-struct AILSOUNDINFO
-{
-    public int format;
-    public IntPtr data_ptr;
-    public uint data_len;
-    public uint rate;
-    public int bits;
-    public int channels;
-    public uint samples;
-    public uint block_size;
-}

@@ -1,4 +1,6 @@
-﻿namespace audiopkg
+﻿using System.Runtime.InteropServices;
+
+namespace audiopkg
 {
     internal class Args
     {
@@ -7,6 +9,7 @@
         public bool Extract;
         public bool Vgmstream;
         public bool Verbose;
+        public bool Print;
 
         public static bool TryParse(string[] args, out Args outArgs)
         {
@@ -36,6 +39,9 @@
                         case "verbose":
                             outArgs.Verbose = true;
                             break;
+                        case "print":
+                            outArgs.Print = true;
+                            break;
                     }
 
                     arglist.RemoveAt(i);
@@ -61,6 +67,9 @@
                             break;
                         case "v":
                             outArgs.Verbose = true;
+                            break;
+                        case "p":
+                            outArgs.Print = true;
                             break;
                     }
 

@@ -1,13 +1,20 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Runtime.InteropServices;
-using System.Text;
-using System.Threading.Tasks;
-using static audiopkg.AudioPackage;
+﻿using System.Runtime.InteropServices;
 
 namespace audiopkg
 {
+    [StructLayout(LayoutKind.Sequential)]
+    struct AILSOUNDINFO
+    {
+        public int format;
+        public IntPtr data_ptr;
+        public uint data_len;
+        public uint rate;
+        public int bits;
+        public int channels;
+        public uint samples;
+        public uint block_size;
+    }
+
     static class Mss
     {
         public const int WAVE_FORMAT_IMA_ADPCM = 0x0011;
@@ -17,15 +24,15 @@ namespace audiopkg
         [DllImport(@"Mss32.dll", SetLastError = true)]
         public static extern IntPtr AIL_last_error();
 
-        public static byte[] DecompressAdpcm(byte[] sampleBytes, SampleHeader header, AudioPackage pkg)
+        public static byte[] DecompressAdpcm(ArraySegment<byte> sampleBytes, SampleHeader header)
         {
-            var adpcm_ptr = Marshal.AllocHGlobal(sampleBytes.Length);
-            Marshal.Copy(sampleBytes, 0, adpcm_ptr, sampleBytes.Length);
+            var adpcm_ptr = Marshal.AllocHGlobal(sampleBytes.Count);
+            Marshal.Copy(sampleBytes.Array ?? throw new InvalidOperationException(), sampleBytes.Offset, adpcm_ptr, sampleBytes.Count);
             var info = new AILSOUNDINFO
             {
                 format = WAVE_FORMAT_IMA_ADPCM,
                 data_ptr = adpcm_ptr,
-                data_len = (uint)sampleBytes.Length,
+                data_len = (uint)sampleBytes.Count,
                 rate = (uint)header.SampleRate,
                 bits = 4,
                 channels = 1, //for adpcm the stereo channels are each encoded as mono then interleaved manually
